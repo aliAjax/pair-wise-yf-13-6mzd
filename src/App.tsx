@@ -1,128 +1,105 @@
-import "./styles.css";
+import { useState } from "react";
+import { StoreProvider, useStore } from "./store";
+import Dashboard from "./components/Dashboard";
+import Entry from "./components/Entry";
+import Handover from "./components/Handover";
+import Review from "./components/Review";
+import Trends from "./components/Trends";
+import Summary from "./components/Summary";
+import { watchDayLabel, watchLabel } from "./domain";
 
-const project = {
-  "sourceNo": 1,
-  "id": "hxyfront-62001",
-  "port": 62001,
-  "title": "船舶轮机值班记录",
-  "domain": "船舶轮机",
-  "prompt": "我想做一个面向船舶轮机值班的前端记录系统，轮机员可以记录主机转速、滑油压力、冷却水温、燃油消耗、舱底水状态和异常巡检项。页面需要有值班班次切换、机舱参数看板、异常记录时间线、交接班摘要和按设备筛选的历史记录。数据先保存在浏览器本地，后续方便扩展成船队统一管理。",
-  "palette": [
-    "#0f766e",
-    "#2563eb",
-    "#f97316"
-  ],
-  "metrics": [
-    "主机转速",
-    "滑油压力",
-    "冷却水温",
-    "燃油消耗"
-  ],
-  "filters": [
-    "主机",
-    "发电机",
-    "泵组",
-    "舱底水"
-  ],
-  "fields": [
-    "值班班次",
-    "设备名称",
-    "参数读数",
-    "异常描述",
-    "处理状态",
-    "交接备注"
-  ],
-  "records": [
-    [
-      "08-12班",
-      "主机",
-      "转速82rpm，滑油压力0.42MPa",
-      "正常巡检"
-    ],
-    [
-      "12-16班",
-      "发电机#2",
-      "冷却水温偏高",
-      "已安排复查"
-    ],
-    [
-      "16-20班",
-      "舱底水",
-      "液位接近警戒线",
-      "已记录交班"
-    ]
-  ]
-};
+const TABS = [
+  { key: "dashboard", label: "看板", icon: "▦" },
+  { key: "entry", label: "抄表录入", icon: "✎" },
+  { key: "handover", label: "交班对账", icon: "✍" },
+  { key: "review", label: "历史与复核", icon: "⚑" },
+  { key: "trends", label: "趋势", icon: "∿" },
+  { key: "summary", label: "摘要与设置", icon: "☰" },
+];
 
-function App() {
+function Shell() {
+  const [tab, setTab] = useState("dashboard");
+  const [bannerOpen, setBannerOpen] = useState(true);
+  const { data, currentWatch, missingDensityCount, pendingReviewCount } = useStore();
+
+  const voidedOpen = data.watches.filter((w) => w.confirmed && w.voided && !w.resigned);
+
   return (
     <main className="app">
-      <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
-      </section>
-
-      <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[86, 14, 7, 32][index] ?? 12}</strong>
-          </article>
-        ))}
-      </section>
-
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}筛选</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存草稿</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="heading">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark">油</span>
           <div>
-            <p>历史记录</p>
-            <h2>近期工作台</h2>
+            <h1>{data.settings.shipName} · 油料与值守对账台</h1>
+            <small>液位 / 温度 / 密度按观测时刻存档 · 油耗取相邻两次实测差 · 数据仅存于本机浏览器</small>
           </div>
-          <button>导出摘要</button>
         </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
+        <div className="top-status">
+          <span className="ts-item">
+            当前 <b>{watchDayLabel(currentWatch)} {watchLabel(currentWatch)}</b>
+          </span>
+          {missingDensityCount > 0 && (
+            <button className="ts-alert" onClick={() => setTab("review")}>
+              待补录密度 ×{missingDensityCount}
+            </button>
+          )}
+          {pendingReviewCount > 0 && (
+            <button className="ts-alert ts-alert-purple" onClick={() => setTab("review")}>
+              待轮机长复核 ×{pendingReviewCount}
+            </button>
+          )}
         </div>
-      </section>
+      </header>
+
+      <nav className="tabs no-print">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            className={tab === t.key ? "tab tab-active" : "tab"}
+            onClick={() => setTab(t.key)}
+          >
+            <span className="tab-icon">{t.icon}</span>
+            {t.label}
+            {t.key === "review" && (missingDensityCount + pendingReviewCount > 0) ? (
+              <i className="tab-dot">{missingDensityCount + pendingReviewCount}</i>
+            ) : null}
+            {t.key === "handover" && voidedOpen.length > 0 ? <i className="tab-dot tab-dot-bad">{voidedOpen.length}</i> : null}
+          </button>
+        ))}
+      </nav>
+
+      {bannerOpen && missingDensityCount > 0 ? (
+        <div className="migration-banner">
+          <b>旧记录已迁移：</b>
+          检测到 {missingDensityCount} 条历史读数缺实测密度，已迁入「待补录」队列——保留液位与温度但不计入存量折算与对账，数据保存在浏览器中。
+          <button className="link-btn" onClick={() => setTab("review")}>
+            前往补录 →
+          </button>
+          <button className="banner-close" onClick={() => setBannerOpen(false)} aria-label="关闭提示">
+            ✕
+          </button>
+        </div>
+      ) : null}
+
+      {tab === "dashboard" && <Dashboard onNavigate={setTab} />}
+      {tab === "entry" && <Entry />}
+      {tab === "handover" && <Handover />}
+      {tab === "review" && <Review />}
+      {tab === "trends" && <Trends />}
+      {tab === "summary" && <Summary />}
+
+      <footer className="app-foot no-print">
+        <span>规则：晚到补录只进历史，不回改已确认班次原始读数 · 同一观测时刻只留一条有效值（轮机长复核裁定）</span>
+        <span>hxyfront-62001 · 本地存储 fuel-watch-reconcile-v1</span>
+      </footer>
     </main>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <StoreProvider>
+      <Shell />
+    </StoreProvider>
+  );
+}
