@@ -1,128 +1,146 @@
+import { useMemo, useState } from "react";
 import "./styles.css";
+import { useCurrentShiftId, useStore } from "./store";
+import { reconcile } from "./lib/fuel";
+import ShiftBar from "./components/ShiftBar";
+import AlertBanner from "./components/AlertBanner";
+import TankBoard from "./components/TankBoard";
+import ReadingForm from "./components/ReadingForm";
+import Reconciliation from "./components/Reconciliation";
+import TrendChart from "./components/TrendChart";
+import ReviewQueue from "./components/ReviewQueue";
+import History from "./components/History";
 
-const project = {
-  "sourceNo": 1,
-  "id": "hxyfront-62001",
-  "port": 62001,
-  "title": "船舶轮机值班记录",
-  "domain": "船舶轮机",
-  "prompt": "我想做一个面向船舶轮机值班的前端记录系统，轮机员可以记录主机转速、滑油压力、冷却水温、燃油消耗、舱底水状态和异常巡检项。页面需要有值班班次切换、机舱参数看板、异常记录时间线、交接班摘要和按设备筛选的历史记录。数据先保存在浏览器本地，后续方便扩展成船队统一管理。",
-  "palette": [
-    "#0f766e",
-    "#2563eb",
-    "#f97316"
-  ],
-  "metrics": [
-    "主机转速",
-    "滑油压力",
-    "冷却水温",
-    "燃油消耗"
-  ],
-  "filters": [
-    "主机",
-    "发电机",
-    "泵组",
-    "舱底水"
-  ],
-  "fields": [
-    "值班班次",
-    "设备名称",
-    "参数读数",
-    "异常描述",
-    "处理状态",
-    "交接备注"
-  ],
-  "records": [
-    [
-      "08-12班",
-      "主机",
-      "转速82rpm，滑油压力0.42MPa",
-      "正常巡检"
-    ],
-    [
-      "12-16班",
-      "发电机#2",
-      "冷却水温偏高",
-      "已安排复查"
-    ],
-    [
-      "16-20班",
-      "舱底水",
-      "液位接近警戒线",
-      "已记录交班"
-    ]
-  ]
-};
+export default function App() {
+  const store = useStore();
+  const { tanks, readings, shifts } = store;
+  const currentId = useCurrentShiftId(shifts);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [highlightTank, setHighlightTank] = useState<string | null>(null);
 
-function App() {
+  const selectedIdResolved = selectedId ?? currentId;
+  const selected =
+    shifts.find((s) => s.id === selectedIdResolved) ?? shifts[0];
+
+  const live = useMemo(
+    () => (selected ? reconcile(selected, tanks, readings) : null),
+    [selected, tanks, readings]
+  );
+
+  const pendingDensity = readings.filter((r) => r.state === "pending_density").length;
+  const pendingReview = readings.filter((r) => r.state === "pending_review").length;
+  const invalidCount = shifts.filter((s) => s.signatureInvalid).length;
+  const validCount = readings.filter((r) => r.state === "valid").length;
+
+  const jumpQueue = () => {
+    document.getElementById("review-queue")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <main className="app">
       <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
+        <div className="hero-top">
+          <div>
+            <p>船舶轮机 · 油料与值守对账台</p>
+            <h1>油料与值守对账台</h1>
+            <span>
+              各舱按观测时刻保存液位、温度、密度并折算存量；油耗取相邻两次实测差，
+              与主机油耗表交接班对账。晚到补录只进历史，不回改已确认班次原始读数；
+              同一观测时刻只留一条有效值，等待轮机长复核；旧记录缺密度自动迁移为待补录。
+            </span>
+          </div>
+          <div className="hero-actions">
+            <span className="local-badge">数据仅保存在本浏览器（localStorage）</span>
+            <button onClick={store.exportData}>导出数据</button>
+            <button
+              onClick={() => {
+                if (confirm("将清空当前数据并重置为演示数据，确定？")) store.resetData();
+              }}
+            >
+              重置演示
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[86, 14, 7, 32][index] ?? 12}</strong>
-          </article>
-        ))}
+        <article>
+          <small>油舱</small>
+          <strong>{tanks.length} 座</strong>
+        </article>
+        <article>
+          <small>有效读数</small>
+          <strong>{validCount} 条</strong>
+        </article>
+        <article>
+          <small>待补录 / 待复核</small>
+          <strong className={pendingDensity + pendingReview ? "num-bad" : ""}>
+            {pendingDensity + pendingReview} 条
+          </strong>
+        </article>
+        <article>
+          <small>{selected.date.slice(5)} {selected.name}班 试算差异</small>
+          <strong className={live && Math.abs(live.diff) > selected.allowableDiff ? "num-bad" : "num-ok"}>
+            {live ? `${live.diff > 0 ? "+" : ""}${live.diff} t` : "—"}
+          </strong>
+        </article>
       </section>
+
+      <AlertBanner
+        shifts={shifts}
+        readings={readings}
+        tanks={tanks}
+        onJumpShift={setSelectedId}
+        onJumpQueue={jumpQueue}
+      />
+
+      <ShiftBar
+        shifts={shifts}
+        selectedId={selected.id}
+        onSelect={setSelectedId}
+        onUpdate={store.updateShift}
+        onSign={store.signShift}
+        onReview={store.reviewShift}
+      />
 
       <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}筛选</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存草稿</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>历史记录</p>
-            <h2>近期工作台</h2>
-          </div>
-          <button>导出摘要</button>
+        <div className="col-main">
+          <TankBoard
+            tanks={tanks}
+            readings={readings}
+            onSelectTank={(id) =>
+              setHighlightTank((cur) => (cur === id ? null : id))
+            }
+          />
+          <Reconciliation shift={selected} tanks={tanks} readings={readings} />
+          <TrendChart tanks={tanks} readings={readings} highlightTankId={highlightTank} />
+          <History tanks={tanks} readings={readings} />
         </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
+        <div className="col-side">
+          <ReadingForm
+            tanks={tanks}
+            shifts={shifts}
+            readings={readings}
+            onSubmit={store.addReading}
+          />
+          <ReviewQueue
+            tanks={tanks}
+            readings={readings}
+            shifts={shifts}
+            onSupplement={store.supplementDensity}
+            onResolve={store.resolveDuplicate}
+            onApprove={store.approveBackfill}
+            onSign={store.signShift}
+            onReview={store.reviewShift}
+          />
         </div>
       </section>
+
+      <footer className="footnote">
+        对账规则：实测消耗 = 相邻两次实测存量差（期初 − 期末）；差异 = 实测消耗合计 −
+        油耗表消耗量；差异超过允许值或存在待补录 / 待复核读数时，班次交接签字立即失效，
+        差异油舱在看板、趋势与摘要中列出，经轮机长复核后重新签字。
+      </footer>
     </main>
   );
 }
-
-export default App;
